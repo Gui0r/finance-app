@@ -3,7 +3,7 @@ session_start();
 require 'db.php';
 
 if (!isset($_SESSION['id'])) {
-    header("Location: login.php");
+    header("Location: ../login/login.php");
     exit;
 }
 
@@ -276,13 +276,13 @@ $ultimos_lancamentos = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <div class="sidebar">
         <h2>Controle Financeiro</h2>
         <ul>
-            <li><a href="dashboard.php">Dashboard</a></li>
-            <li><a href="receitas.php">Receitas</a></li>
-            <li><a href="despesas.php">Despesas</a></li>
+            <li><a href="../dashboard/dashboard.php">Dashboard</a></li>
+            <li><a href="../receitas/receitas.php">Receitas</a></li>
+            <li><a href="../despesas/despesas.php">Despesas</a></li>
             <li><a href="../categorias/categorias.php">Categorias</a></li>
-            <li><a href="relatorios.php">Relatórios</a></li>
-            <li><a href="limite_gastos.php">Limite de Gastos</a></li>
-            <li><a href="logout.php">Sair</a></li>
+            <li><a href="../relatorios/relatorios.php">Relatórios</a></li>
+            <li><a href="../limite_gastos/limite_gastos.php">Limite de Gastos</a></li>
+            <li><a href="../login/logout.php">Sair</a></li>
         </ul>
     </div>
     
@@ -312,19 +312,19 @@ $ultimos_lancamentos = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="card">
                 <h3>Receitas</h3>
                 <p class="value receitas">R$ <?php echo number_format($total_receitas, 2, ',', '.'); ?></p>
-                <a href="receitas.php" class="btn btn-success">Adicionar Receita</a>
+                <a href="../receitas/receitas.php" class="btn btn-success">Adicionar Receita</a>
             </div>
             
             <div class="card">
                 <h3>Despesas</h3>
                 <p class="value despesas">R$ <?php echo number_format($total_despesas, 2, ',', '.'); ?></p>
-                <a href="despesas.php" class="btn btn-danger">Adicionar Despesa</a>
+                <a href="../despesas/despesas.php" class="btn btn-danger">Adicionar Despesa</a>
             </div>
 
             <div class="card">
                 <h3>Limite de Gastos</h3>
                 <p class="value limite">R$ <?php echo number_format($limite_gastos, 2, ',', '.'); ?></p>
-                <a href="limite_gastos.php" class="btn btn-warning">Definir Limite</a>
+                <a href="../limite_gastos/limite_gastos.php" class="btn btn-warning">Definir Limite</a>
             </div>
             
             <div class="card">
