@@ -10,187 +10,200 @@ if (!isset($_SESSION['id'])) {
 $user_id = $_SESSION['id'];
 $mensagem = '';
 
-// Processar formulário de limite de gastos
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $limite_gastos = str_replace(',', '.', $_POST['limite_gastos'] ?? '');
     
-    if (!is_numeric($limite_gastos)) {
-        $mensagem = '<div class="alert alert-danger">Valor inválido para o limite de gastos.</div>';
+    if (empty($limite_gastos)) {
+        $mensagem = '<div class="alert alert-danger">Preencha o limite de gastos.</div>';
     } else {
-        $limite_gastos = (float)$limite_gastos;
-        $stmt = $pdo->prepare("UPDATE usuarios SET limite_gastos = ? WHERE id = ?");
-        
-        if ($stmt->execute([$limite_gastos, $user_id])) {
-            $mensagem = '<div class="alert alert-success">Limite de gastos atualizado com sucesso!</div>';
-        } else {
-            $mensagem = '<div class="alert alert-danger">Erro ao atualizar o limite de gastos.</div>';
+        try {
+            $pdo->beginTransaction();
+            
+            $stmt = $pdo->prepare("
+                UPDATE usuarios 
+                SET limite_gastos = ?
+                WHERE id = ?
+            ");
+            
+            if ($stmt->execute([$limite_gastos, $user_id])) {
+                // Registrar log de atividade
+                $stmt = $pdo->prepare("
+                    INSERT INTO logs_atividade (usuario_id, acao, detalhes, ip_address)
+                    VALUES (?, 'atualizar_limite_gastos', ?, ?)
+                ");
+                $stmt->execute([
+                    $user_id,
+                    "Limite de gastos atualizado para R$ $limite_gastos",
+                    $_SERVER['REMOTE_ADDR']
+                ]);
+
+                // Criar notificação
+                $stmt = $pdo->prepare("
+                    INSERT INTO notificacoes (usuario_id, titulo, mensagem, tipo)
+                    VALUES (?, ?, ?, 'info')
+                ");
+                $stmt->execute([
+                    $user_id,
+                    "Limite de Gastos Atualizado",
+                    "Seu limite de gastos foi atualizado para R$ $limite_gastos"
+                ]);
+
+                $pdo->commit();
+                $mensagem = '<div class="alert alert-success">Limite de gastos atualizado com sucesso!</div>';
+            } else {
+                throw new Exception("Erro ao atualizar limite de gastos");
+            }
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $mensagem = '<div class="alert alert-danger">Erro ao atualizar limite de gastos: ' . $e->getMessage() . '</div>';
         }
     }
 }
 
-// Obter limite atual
+// Buscar limite de gastos atual
 $stmt = $pdo->prepare("SELECT limite_gastos FROM usuarios WHERE id = ?");
 $stmt->execute([$user_id]);
-$limite_atual = $stmt->fetchColumn() ?? 0;
+$usuario = $stmt->fetch(PDO::FETCH_ASSOC);
+$limite_atual = $usuario['limite_gastos'] ?? 0;
+
+// Buscar gastos do mês atual
+$stmt = $pdo->prepare("
+    SELECT COALESCE(SUM(valor), 0) as total_gastos
+    FROM transacoes
+    WHERE usuario_id = ? 
+    AND tipo = 'despesa'
+    AND MONTH(data) = MONTH(CURRENT_DATE())
+    AND YEAR(data) = YEAR(CURRENT_DATE())
+");
+$stmt->execute([$user_id]);
+$gastos_mes = $stmt->fetch(PDO::FETCH_ASSOC);
+$total_gastos = $gastos_mes['total_gastos'];
+
+// Calcular percentual gasto
+$percentual_gasto = $limite_atual > 0 ? ($total_gastos / $limite_atual) * 100 : 0;
+
+// Buscar planejamento orçamentário do mês atual
+$stmt = $pdo->prepare("
+    SELECT c.nome, c.cor, po.valor_planejado, po.valor_realizado
+    FROM planejamento_orcamento po
+    JOIN categorias c ON po.categoria_id = c.id
+    WHERE po.usuario_id = ?
+    AND po.mes = MONTH(CURRENT_DATE())
+    AND po.ano = YEAR(CURRENT_DATE())
+    AND c.tipo = 'despesa'
+    ORDER BY c.nome
+");
+$stmt->execute([$user_id]);
+$planejamento = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Controle Financeiro - Limite de Gastos</title>
-    <style>
-        /* Manter mesmo estilo do receitas.php */
-        body {
-            font-family: 'Helvetica', Arial, sans-serif;
-            margin: 0;
-            display: flex;
-            min-height: 100vh;
-        }
-        
-        .sidebar {
-            width: 250px;
-            background: #333;
-            color: #fff;
-            padding: 20px;
-            height: 100vh;
-        }
-        
-        .sidebar h2 {
-            margin-top: 0;
-            border-bottom: 1px solid #444;
-            padding-bottom: 10px;
-        }
-        
-        .sidebar ul {
-            list-style: none;
-            padding: 0;
-        }
-        
-        .sidebar ul li {
-            padding: 10px 0;
-        }
-        
-        .sidebar ul li a {
-            color: #fff;
-            text-decoration: none;
-            display: block;
-        }
-        
-        .sidebar ul li a:hover {
-            color: #ccc;
-        }
-        
-        .content {
-            flex-grow: 1;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        
-        .card {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        
-        .form-group {
-            margin-bottom: 15px;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-        
-        .form-control {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        
-        .btn {
-            display: inline-block;
-            padding: 8px 16px;
-            background: #007bff;
-            color: white;
-            border-radius: 4px;
-            text-decoration: none;
-            border: none;
-            cursor: pointer;
-        }
-        
-        .btn-success {
-            background: #28a745;
-        }
-        
-        .alert {
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 4px;
-        }
-        
-        .alert-success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .alert-danger {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-    </style>
+    <title>Limite de Gastos</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
-    <div class="sidebar">
-        <h2>Controle Financeiro</h2>
-        <ul>
-            <li><a href="../dashboard/dashboard.php">Dashboard</a></li>
-            <li><a href="../receitas/receitas.php">Receitas</a></li>
-            <li><a href="../despesas/despesas.php">Despesas</a></li>
-            <li><a href="../categorias/categorias.php">Categorias</a></li>
-            <li><a href="../relatorios/relatorios.php">Relatórios</a></li>
-            <li><a href="limite_gastos.php">Limite de Gastos</a></li>
-            <li><a href="../login/logout.php">Sair</a></li>
-        </ul>
-    </div>
-    
-    <div class="content">
-        <h1>Limite de Gastos</h1>
+    <div class="container mt-4">
+        <h2>Limite de Gastos</h2>
         
         <?php echo $mensagem; ?>
         
-        <div class="card">
-            <h2>Definir Limite Mensal</h2>
-            <form method="POST" action="">
-                <div class="form-group">
-                    <label for="limite_gastos">Valor do Limite (R$)</label>
-                    <input type="text" 
-                        id="limite_gastos" 
-                        name="limite_gastos" 
-                        class="form-control" 
-                        placeholder="0,00"
-                        value="<?php echo number_format($limite_atual, 2, ',', '.'); ?>"
-                        required>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Configuração do Limite</h5>
+                    </div>
+                    <div class="card-body">
+                        <form method="POST">
+                            <div class="mb-3">
+                                <label for="limite_gastos" class="form-label">Limite de Gastos Mensal (R$)</label>
+                                <input type="text" class="form-control" id="limite_gastos" name="limite_gastos" 
+                                       value="<?php echo number_format($limite_atual, 2, ',', '.'); ?>" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Atualizar Limite</button>
+                        </form>
+                    </div>
                 </div>
-                
-                <button type="submit" class="btn btn-success">Salvar Limite</button>
-            </form>
-        </div>
 
-        <div class="card">
-            <h2>Seu Limite Atual</h2>
-            <p style="font-size: 1.5em; color: #28a745;">
-                R$ <?php echo number_format($limite_atual, 2, ',', '.'); ?>
-            </p>
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Resumo do Mês</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="progress mb-3" style="height: 25px;">
+                            <div class="progress-bar <?php echo $percentual_gasto > 100 ? 'bg-danger' : ($percentual_gasto > 80 ? 'bg-warning' : 'bg-success'); ?>" 
+                                 role="progressbar" 
+                                 style="width: <?php echo min($percentual_gasto, 100); ?>%"
+                                 aria-valuenow="<?php echo $percentual_gasto; ?>" 
+                                 aria-valuemin="0" 
+                                 aria-valuemax="100">
+                                <?php echo number_format($percentual_gasto, 1); ?>%
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-6">
+                                <p class="mb-0">Total Gastos:</p>
+                                <h4 class="text-danger">R$ <?php echo number_format($total_gastos, 2, ',', '.'); ?></h4>
+                            </div>
+                            <div class="col-6">
+                                <p class="mb-0">Limite:</p>
+                                <h4>R$ <?php echo number_format($limite_atual, 2, ',', '.'); ?></h4>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Planejamento Orçamentário</h5>
+                    </div>
+                    <div class="card-body">
+                        <?php if (empty($planejamento)): ?>
+                            <p class="text-muted">Nenhum planejamento orçamentário cadastrado para este mês.</p>
+                        <?php else: ?>
+                            <?php foreach ($planejamento as $item): ?>
+                                <div class="mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span style="color: <?php echo $item['cor']; ?>">
+                                            <i class="fas fa-circle"></i> <?php echo htmlspecialchars($item['nome']); ?>
+                                        </span>
+                                        <span>
+                                            R$ <?php echo number_format($item['valor_realizado'], 2, ',', '.'); ?> / 
+                                            R$ <?php echo number_format($item['valor_planejado'], 2, ',', '.'); ?>
+                                        </span>
+                                    </div>
+                                    <?php 
+                                    $percentual = $item['valor_planejado'] > 0 
+                                        ? ($item['valor_realizado'] / $item['valor_planejado']) * 100 
+                                        : 0;
+                                    ?>
+                                    <div class="progress" style="height: 8px;">
+                                        <div class="progress-bar" 
+                                             role="progressbar" 
+                                             style="width: <?php echo min($percentual, 100); ?>%; background-color: <?php echo $item['cor']; ?>"
+                                             aria-valuenow="<?php echo $percentual; ?>" 
+                                             aria-valuemin="0" 
+                                             aria-valuemax="100">
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>

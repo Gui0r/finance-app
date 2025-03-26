@@ -15,31 +15,66 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $descricao = $_POST['descricao'] ?? '';
     $valor = str_replace(',', '.', $_POST['valor'] ?? '');
     $data = $_POST['data'] ?? '';
-    
+    $recorrente = isset($_POST['recorrente']) ? 1 : 0;
+    $frequencia_recorrencia = $_POST['frequencia_recorrencia'] ?? null;
+    $data_fim_recorrencia = $_POST['data_fim_recorrencia'] ?? null;
+    $observacoes = $_POST['observacoes'] ?? null;
+    $moeda = $_POST['moeda'] ?? 'BRL';
 
     if (empty($categoria_id) || empty($descricao) || empty($valor) || empty($data)) {
         $mensagem = '<div class="alert alert-danger">Preencha todos os campos obrigatórios.</div>';
     } else {
-    
-        $stmt = $pdo->prepare("
-            INSERT INTO transacoes (usuario_id, categoria_id, descricao, valor, data, tipo)
-            VALUES (?, ?, ?, ?, ?, 'despesa')
-        ");
-        
-        if ($stmt->execute([$user_id, $categoria_id, $descricao, $valor, $data])) {
-            $mensagem = '<div class="alert alert-success">Despesa cadastrada com sucesso!</div>';
-        } else {
-            $mensagem = '<div class="alert alert-danger">Erro ao cadastrar despesa. Tente novamente.</div>';
+        try {
+            $pdo->beginTransaction();
+            
+            $stmt = $pdo->prepare("
+                INSERT INTO transacoes (
+                    usuario_id, categoria_id, descricao, valor, data, tipo,
+                    moeda, recorrente, frequencia_recorrencia, data_fim_recorrencia, observacoes
+                )
+                VALUES (?, ?, ?, ?, ?, 'despesa', ?, ?, ?, ?, ?)
+            ");
+            
+            if ($stmt->execute([
+                $user_id, $categoria_id, $descricao, $valor, $data,
+                $moeda, $recorrente, $frequencia_recorrencia, $data_fim_recorrencia, $observacoes
+            ])) {
+                // Registrar log de atividade
+                $stmt = $pdo->prepare("
+                    INSERT INTO logs_atividade (usuario_id, acao, detalhes, ip_address)
+                    VALUES (?, 'cadastro_despesa', ?, ?)
+                ");
+                $stmt->execute([
+                    $user_id,
+                    "Nova despesa cadastrada: $descricao - R$ $valor",
+                    $_SERVER['REMOTE_ADDR']
+                ]);
+
+                $pdo->commit();
+                $mensagem = '<div class="alert alert-success">Despesa cadastrada com sucesso!</div>';
+            } else {
+                throw new Exception("Erro ao cadastrar despesa");
+            }
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $mensagem = '<div class="alert alert-danger">Erro ao cadastrar despesa: ' . $e->getMessage() . '</div>';
         }
     }
 }
 
-$stmt = $pdo->prepare("SELECT id, nome FROM categorias WHERE tipo = 'despesa'");
-$stmt->execute();
+// Buscar categorias do usuário
+$stmt = $pdo->prepare("
+    SELECT id, nome, cor, icone 
+    FROM categorias 
+    WHERE usuario_id = ? AND tipo = 'despesa' AND ativo = 1
+    ORDER BY nome
+");
+$stmt->execute([$user_id]);
 $categorias = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Buscar despesas do usuário
 $stmt = $pdo->prepare("
-    SELECT t.*, c.nome as categoria, c.cor
+    SELECT t.*, c.nome as categoria, c.cor, c.icone
     FROM transacoes t
     JOIN categorias c ON t.categoria_id = c.id
     WHERE t.usuario_id = ? AND t.tipo = 'despesa'
@@ -47,6 +82,12 @@ $stmt = $pdo->prepare("
 ");
 $stmt->execute([$user_id]);
 $despesas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Buscar configurações do usuário
+$stmt = $pdo->prepare("SELECT moeda_padrao FROM usuarios WHERE id = ?");
+$stmt->execute([$user_id]);
+$usuario = $stmt->fetch(PDO::FETCH_ASSOC);
+$moeda_padrao = $usuario['moeda_padrao'] ?? 'BRL';
 ?>
 
 <!DOCTYPE html>

@@ -1,311 +1,181 @@
 <?php
-require_once __DIR__ . '/../../api/controllers/auth_controller.php';
+session_start();
+require 'db.php';
 
-
-$auth = new AuthController();
-
-if (!$auth->isLoggedIn()) {
-    header("Location: ../login/login.php");
+if (!isset($_SESSION['id'])) {
+    header("Location: login.php");
     exit;
 }
+
+$user_id = $_SESSION['id'];
+$mensagem = '';
+
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    $titulo = $_POST['titulo'] ?? '';
+    $descricao = $_POST['descricao'] ?? '';
+    $data_lembrete = $_POST['data_lembrete'] ?? '';
+    $tipo = $_POST['tipo'] ?? '';
+
+    if (empty($titulo) || empty($data_lembrete) || empty($tipo)) {
+        $mensagem = '<div class="alert alert-danger">Preencha todos os campos obrigatórios.</div>';
+    } else {
+        try {
+            $pdo->beginTransaction();
+            
+            $stmt = $pdo->prepare("
+                INSERT INTO lembretes (
+                    usuario_id, titulo, descricao, data_lembrete, tipo
+                )
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            
+            if ($stmt->execute([$user_id, $titulo, $descricao, $data_lembrete, $tipo])) {
+                // Registrar log de atividade
+                $stmt = $pdo->prepare("
+                    INSERT INTO logs_atividade (usuario_id, acao, detalhes, ip_address)
+                    VALUES (?, 'cadastro_lembrete', ?, ?)
+                ");
+                $stmt->execute([
+                    $user_id,
+                    "Novo lembrete cadastrado: $titulo",
+                    $_SERVER['REMOTE_ADDR']
+                ]);
+
+                // Criar notificação
+                $stmt = $pdo->prepare("
+                    INSERT INTO notificacoes (usuario_id, titulo, mensagem, tipo)
+                    VALUES (?, ?, ?, 'info')
+                ");
+                $stmt->execute([
+                    $user_id,
+                    "Novo Lembrete",
+                    "Um novo lembrete foi cadastrado: $titulo"
+                ]);
+
+                $pdo->commit();
+                $mensagem = '<div class="alert alert-success">Lembrete cadastrado com sucesso!</div>';
+            } else {
+                throw new Exception("Erro ao cadastrar lembrete");
+            }
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $mensagem = '<div class="alert alert-danger">Erro ao cadastrar lembrete: ' . $e->getMessage() . '</div>';
+        }
+    }
+}
+
+// Buscar lembretes do usuário
+$stmt = $pdo->prepare("
+    SELECT * FROM lembretes 
+    WHERE usuario_id = ? 
+    ORDER BY data_lembrete ASC
+");
+$stmt->execute([$user_id]);
+$lembretes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lembretes de Contas - Controle Financeiro</title>
-    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <title>Gerenciamento de Lembretes</title>
     <link rel="stylesheet" href="style.css">
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
-    <div id="app">
-        <div class="sidebar">
-            <div class="sidebar-header">
-                <i class='bx bx-wallet'></i>
-                <h2>Controle Financeiro</h2>
-            </div>
-            
-            <ul class="sidebar-menu">
-                <li>
-                    <a href="../dashboard/dashboard.php">
-                        <i class='bx bx-home'></i>
-                        Dashboard
-                    </a>
-                </li>
-                <li>
-                    <a href="../receitas/receitas.php">
-                        <i class='bx bx-trending-up'></i>
-                        Receitas
-                    </a>
-                </li>
-                <li>
-                    <a href="../despesas/despesas.php">
-                        <i class='bx bx-trending-down'></i>
-                        Despesas
-                    </a>
-                </li>
-                <li>
-                    <a href="../lembretes/lembretes.php" class="active">
-                        <i class='bx bx-bell'></i>
-                        Lembretes
-                    </a>
-                </li>
-                <li>
-                    <a href="../limite_gastos/limite_gastos.php">
-                        <i class='bx bx-dollar-circle'></i>
-                        Limite de Gastos
-                    </a>
-                </li>
-                <li>
-                    <a href="#" @click.prevent="logout">
-                        <i class='bx bx-log-out'></i>
-                        Sair
-                    </a>
-                </li>
-            </ul>
-        </div>
+    <div class="container mt-4">
+        <h2>Gerenciamento de Lembretes</h2>
         
-        <div class="content">
-            <div class="page-header">
-                <h1>Lembretes de Contas a Pagar</h1>
-                
-                <button class="btn btn-success" @click="showForm = true" v-if="!showForm">
-                    <i class='bx bx-plus'></i>
-                    Novo Lembrete
-                </button>
-            </div>
-            
-            <div class="card" v-if="showForm">
-                <h2>{{ form.id ? 'Editar' : 'Novo' }} Lembrete</h2>
-                
-                <form @submit.prevent="handleSubmit" class="form">
-                    <div class="form-group">
-                        <label for="descricao">Descrição</label>
-                        <input 
-                            type="text" 
-                            id="descricao" 
-                            v-model="form.descricao" 
-                            class="form-control" 
-                            :class="{'error': errors.descricao}"
-                            required
-                        >
-                        <div class="error-message" v-if="errors.descricao">
-                            {{ errors.descricao }}
-                        </div>
+        <?php echo $mensagem; ?>
+        
+        <!-- Botão para adicionar novo lembrete -->
+        <button type="button" class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#modalAddLembrete">
+            <i class="fas fa-plus"></i> Novo Lembrete
+        </button>
+
+        <!-- Lista de lembretes -->
+        <div class="row">
+            <?php foreach ($lembretes as $lembrete): ?>
+            <div class="col-md-6 mb-3">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><?php echo htmlspecialchars($lembrete['titulo']); ?></h5>
+                        <span class="badge bg-<?php echo $lembrete['status'] === 'pendente' ? 'warning' : ($lembrete['status'] === 'concluido' ? 'success' : 'danger'); ?>">
+                            <?php echo ucfirst($lembrete['status']); ?>
+                        </span>
                     </div>
-                    
-                    <div class="form-group">
-                        <label for="valor">Valor (R$)</label>
-                        <input 
-                            type="text" 
-                            id="valor" 
-                            v-model="form.valor" 
-                            class="form-control" 
-                            @input="formatarValorInput"
-                            :class="{'error': errors.valor}"
-                            placeholder="0,00" 
-                            required
-                        >
-                        <div class="error-message" v-if="errors.valor">
-                            {{ errors.valor }}
-                        </div>
+                    <div class="card-body">
+                        <p class="card-text"><?php echo nl2br(htmlspecialchars($lembrete['descricao'] ?? '')); ?></p>
+                        <p class="card-text">
+                            <small class="text-muted">
+                                <i class="fas fa-calendar"></i> 
+                                <?php echo date('d/m/Y H:i', strtotime($lembrete['data_lembrete'])); ?>
+                            </small>
+                        </p>
+                        <p class="card-text">
+                            <small class="text-muted">
+                                <i class="fas fa-tag"></i> 
+                                <?php echo ucfirst(str_replace('_', ' ', $lembrete['tipo'])); ?>
+                            </small>
+                        </p>
                     </div>
-                    
-                    <div class="form-group">
-                        <label for="data_vencimento">Data de Vencimento</label>
-                        <input 
-                            type="date" 
-                            id="data_vencimento" 
-                            v-model="form.data_vencimento" 
-                            class="form-control" 
-                            :class="{'error': errors.data_vencimento}"
-                            required
-                        >
-                        <div class="error-message" v-if="errors.data_vencimento">
-                            {{ errors.data_vencimento }}
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="status">Status</label>
-                        <select 
-                            id="status" 
-                            v-model="form.status" 
-                            class="form-control" 
-                            :class="{'error': errors.status}"
-                            required
-                        >
-                            <option value="pendente">Pendente</option>
-                            <option value="pago">Pago</option>
-                            <option value="atrasado">Atrasado</option>
-                        </select>
-                        <div class="error-message" v-if="errors.status">
-                            {{ errors.status }}
-                        </div>
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="button" class="btn btn-secondary" @click="cancelarForm">
-                            <i class='bx bx-x'></i>
-                            Cancelar
+                    <div class="card-footer">
+                        <button class="btn btn-sm btn-success" onclick="marcarConcluido(<?php echo $lembrete['id']; ?>)">
+                            <i class="fas fa-check"></i> Concluir
                         </button>
-                        
-                        <button type="submit" class="btn btn-success">
-                            <i class='bx bx-save'></i>
-                            {{ form.id ? 'Atualizar' : 'Salvar' }}
+                        <button class="btn btn-sm btn-warning" onclick="editarLembrete(<?php echo $lembrete['id']; ?>)">
+                            <i class="fas fa-edit"></i> Editar
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="excluirLembrete(<?php echo $lembrete['id']; ?>)">
+                            <i class="fas fa-trash"></i> Excluir
                         </button>
                     </div>
-                </form>
-            </div>
-            
-            <div class="card">
-                <h2>Lembretes Atrasados</h2>
-                
-                <div v-if="lembretesAtrasados.length === 0" class="empty-message">
-                    <i class='bx bx-check-circle'></i>
-                    <p>Não há contas atrasadas.</p>
-                </div>
-                
-                <div class="table-responsive" v-else>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Descrição</th>
-                                <th>Valor</th>
-                                <th>Vencimento</th>
-                                <th>Status</th>
-                                <th>Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="lembrete in lembretesAtrasados" :key="lembrete.id">
-                                <td>{{ lembrete.descricao }}</td>
-                                <td>R$ {{ formatCurrency(lembrete.valor) }}</td>
-                                <td>{{ formatDate(lembrete.data_vencimento) }}</td>
-                                <td>
-                                    <span :class="'status status-' + lembrete.status">
-                                        {{ statusTexto(lembrete.status) }}
-                                    </span>
-                                </td>
-                                <td>
-                                    <div class="actions">
-                                        <button class="btn-icon" @click="marcarComoPago(lembrete)" title="Marcar como pago">
-                                            <i class='bx bx-check'></i>
-                                        </button>
-                                        <button class="btn-icon" @click="editarLembrete(lembrete)" title="Editar">
-                                            <i class='bx bx-edit'></i>
-                                        </button>
-                                        <button class="btn-icon" @click="excluirLembrete(lembrete.id)" title="Excluir">
-                                            <i class='bx bx-trash'></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
                 </div>
             </div>
-            
-            <div class="card">
-                <h2>Próximos Vencimentos</h2>
-                
-                <div v-if="lembretesProximos.length === 0" class="empty-message">
-                    <i class='bx bx-calendar-check'></i>
-                    <p>Não há contas a vencer nos próximos dias.</p>
+            <?php endforeach; ?>
+        </div>
+    </div>
+
+    <!-- Modal Adicionar Lembrete -->
+    <div class="modal fade" id="modalAddLembrete" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Novo Lembrete</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                
-                <div class="table-responsive" v-else>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Descrição</th>
-                                <th>Valor</th>
-                                <th>Vencimento</th>
-                                <th>Status</th>
-                                <th>Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="lembrete in lembretesProximos" :key="lembrete.id">
-                                <td>{{ lembrete.descricao }}</td>
-                                <td>R$ {{ formatCurrency(lembrete.valor) }}</td>
-                                <td>{{ formatDate(lembrete.data_vencimento) }}</td>
-                                <td>
-                                    <span :class="'status status-' + lembrete.status">
-                                        {{ statusTexto(lembrete.status) }}
-                                    </span>
-                                </td>
-                                <td>
-                                    <div class="actions">
-                                        <button class="btn-icon" @click="marcarComoPago(lembrete)" title="Marcar como pago">
-                                            <i class='bx bx-check'></i>
-                                        </button>
-                                        <button class="btn-icon" @click="editarLembrete(lembrete)" title="Editar">
-                                            <i class='bx bx-edit'></i>
-                                        </button>
-                                        <button class="btn-icon" @click="excluirLembrete(lembrete.id)" title="Excluir">
-                                            <i class='bx bx-trash'></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
-            <div class="card">
-                <h2>Todos os Lembretes</h2>
-                
-                <div v-if="lembretes.length === 0" class="empty-message">
-                    <i class='bx bx-info-circle'></i>
-                    <p>Nenhum lembrete cadastrado.</p>
-                </div>
-                
-                <div class="table-responsive" v-else>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Descrição</th>
-                                <th>Valor</th>
-                                <th>Vencimento</th>
-                                <th>Status</th>
-                                <th>Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="lembrete in lembretes" :key="lembrete.id">
-                                <td>{{ lembrete.descricao }}</td>
-                                <td>R$ {{ formatCurrency(lembrete.valor) }}</td>
-                                <td>{{ formatDate(lembrete.data_vencimento) }}</td>
-                                <td>
-                                    <span :class="'status status-' + lembrete.status">
-                                        {{ statusTexto(lembrete.status) }}
-                                    </span>
-                                </td>
-                                <td>
-                                    <div class="actions">
-                                        <button v-if="lembrete.status !== 'pago'" class="btn-icon" @click="marcarComoPago(lembrete)" title="Marcar como pago">
-                                            <i class='bx bx-check'></i>
-                                        </button>
-                                        <button class="btn-icon" @click="editarLembrete(lembrete)" title="Editar">
-                                            <i class='bx bx-edit'></i>
-                                        </button>
-                                        <button class="btn-icon" @click="excluirLembrete(lembrete.id)" title="Excluir">
-                                            <i class='bx bx-trash'></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div class="modal-body">
+                    <form id="formAddLembrete" method="POST">
+                        <div class="mb-3">
+                            <label for="titulo" class="form-label">Título</label>
+                            <input type="text" class="form-control" id="titulo" name="titulo" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="descricao" class="form-label">Descrição</label>
+                            <textarea class="form-control" id="descricao" name="descricao" rows="3"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label for="data_lembrete" class="form-label">Data e Hora</label>
+                            <input type="datetime-local" class="form-control" id="data_lembrete" name="data_lembrete" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="tipo" class="form-label">Tipo</label>
+                            <select class="form-select" id="tipo" name="tipo" required>
+                                <option value="conta_pagar">Conta a Pagar</option>
+                                <option value="conta_receber">Conta a Receber</option>
+                                <option value="meta">Meta</option>
+                                <option value="outro">Outro</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Salvar</button>
+                    </form>
                 </div>
             </div>
         </div>
     </div>
-    
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="script.js"></script>
 </body>
 </html> 
